@@ -1,6 +1,7 @@
+use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
-use crate::bankrecords::deserialize_amount;
+use crate::bankrecords::deserialize_amount_strict;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -18,6 +19,6 @@ pub struct Transaction {
     pub type_: TransactionType,
     pub client: u16,
     pub tx: u32,
-    #[serde(deserialize_with = "deserialize_amount")]
-    pub amount: f64,
+    #[serde(deserialize_with = "deserialize_amount_strict")]
+    pub amount: Decimal,
 }

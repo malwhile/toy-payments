@@ -109,6 +109,7 @@ mod tests {
     use crate::bankrecords::BankingRecords;
     use crate::client::test_helpers::ClientSnapshot;
     use rstest::{fixture, rstest};
+    use rust_decimal::Decimal;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -136,8 +137,8 @@ mod tests {
     fn test_process_single_deposit(temp_csv: NamedTempFile) {
         let mut records = process_csv(temp_csv, "type,client,tx,amount\ndeposit,1,1,100.0\n");
         let snap = ClientSnapshot::from_client(records.get_client(1));
-        assert_eq!(snap.available, 100.0);
-        assert_eq!(snap.total, 100.0);
+        assert_eq!(snap.available, Decimal::new(1_000_000, 4));
+        assert_eq!(snap.total, Decimal::new(1_000_000, 4));
     }
 
     #[rstest]
@@ -147,8 +148,8 @@ mod tests {
             "type,client,tx,amount\ndeposit,1,1,100.0\nwithdrawal,1,2,30.0\n",
         );
         let snap = ClientSnapshot::from_client(records.get_client(1));
-        assert_eq!(snap.available, 70.0);
-        assert_eq!(snap.total, 70.0);
+        assert_eq!(snap.available, Decimal::new(700_000, 4));
+        assert_eq!(snap.total, Decimal::new(700_000, 4));
     }
 
     #[rstest]
@@ -158,8 +159,8 @@ mod tests {
             "type,client,tx,amount\ndeposit,1,1,100.0\nwithdrawal,1,2,150.0\n",
         );
         let snap = ClientSnapshot::from_client(records.get_client(1));
-        assert_eq!(snap.available, 100.0);
-        assert_eq!(snap.total, 100.0);
+        assert_eq!(snap.available, Decimal::new(1_000_000, 4));
+        assert_eq!(snap.total, Decimal::new(1_000_000, 4));
     }
 
     // --- DISPUTE AND RESOLVE TESTS ---
@@ -170,9 +171,9 @@ mod tests {
             "type,client,tx,amount\ndeposit,1,1,100.0\ndispute,1,1,\nresolve,1,1,\n",
         );
         let snap = ClientSnapshot::from_client(records.get_client(1));
-        assert_eq!(snap.available, 100.0);
-        assert_eq!(snap.held, 0.0);
-        assert_eq!(snap.total, 100.0);
+        assert_eq!(snap.available, Decimal::new(1_000_000, 4));
+        assert_eq!(snap.held, Decimal::ZERO);
+        assert_eq!(snap.total, Decimal::new(1_000_000, 4));
     }
 
     #[rstest]
@@ -182,9 +183,9 @@ mod tests {
             "type,client,tx,amount\ndeposit,1,1,100.0\ndispute,1,1,\n",
         );
         let snap = ClientSnapshot::from_client(records.get_client(1));
-        assert_eq!(snap.available, 0.0);
-        assert_eq!(snap.held, 100.0);
-        assert_eq!(snap.total, 100.0);
+        assert_eq!(snap.available, Decimal::ZERO);
+        assert_eq!(snap.held, Decimal::new(1_000_000, 4));
+        assert_eq!(snap.total, Decimal::new(1_000_000, 4));
     }
 
     // --- CHARGEBACK TESTS ---
@@ -196,9 +197,9 @@ mod tests {
         );
         let snap = ClientSnapshot::from_client(records.get_client(1));
         assert!(snap.locked);
-        assert_eq!(snap.available, 0.0);
-        assert_eq!(snap.held, 0.0);
-        assert_eq!(snap.total, 0.0);
+        assert_eq!(snap.available, Decimal::ZERO);
+        assert_eq!(snap.held, Decimal::ZERO);
+        assert_eq!(snap.total, Decimal::ZERO);
     }
 
     #[rstest]
@@ -209,15 +210,19 @@ mod tests {
         );
         let snap = ClientSnapshot::from_client(records.get_client(1));
         assert!(snap.locked);
-        assert_eq!(snap.available, 0.0);
+        assert_eq!(snap.available, Decimal::ZERO);
     }
 
     // --- MULTIPLE CLIENT TESTS ---
     #[rstest]
-    #[case(1, 100.0)]
-    #[case(2, 200.0)]
-    #[case(3, 300.0)]
-    fn test_multiple_clients(temp_csv: NamedTempFile, #[case] client_id: u16, #[case] amount: f64) {
+    #[case(1, Decimal::new(1_000_000, 4))]
+    #[case(2, Decimal::new(2_000_000, 4))]
+    #[case(3, Decimal::new(3_000_000, 4))]
+    fn test_multiple_clients(
+        temp_csv: NamedTempFile,
+        #[case] client_id: u16,
+        #[case] amount: Decimal,
+    ) {
         let csv = format!(
             "type,client,tx,amount\ndeposit,{},{},{}\n",
             client_id, client_id as u32, amount
@@ -235,10 +240,10 @@ mod tests {
         );
         let snap1 = ClientSnapshot::from_client(records.get_client(1));
         let snap2 = ClientSnapshot::from_client(records.get_client(2));
-        assert_eq!(snap1.available, 0.0);
-        assert_eq!(snap1.held, 100.0);
-        assert_eq!(snap2.available, 200.0);
-        assert_eq!(snap2.held, 0.0);
+        assert_eq!(snap1.available, Decimal::ZERO);
+        assert_eq!(snap1.held, Decimal::new(1_000_000, 4));
+        assert_eq!(snap2.available, Decimal::new(2_000_000, 4));
+        assert_eq!(snap2.held, Decimal::ZERO);
     }
 
     // --- ERROR HANDLING TESTS ---
@@ -246,8 +251,8 @@ mod tests {
     fn test_dispute_nonexistent_transaction(temp_csv: NamedTempFile) {
         let mut records = process_csv(temp_csv, "type,client,tx,amount\ndispute,1,999,\n");
         let snap = ClientSnapshot::from_client(records.get_client(1));
-        assert_eq!(snap.available, 0.0);
-        assert_eq!(snap.held, 0.0);
+        assert_eq!(snap.available, Decimal::ZERO);
+        assert_eq!(snap.held, Decimal::ZERO);
     }
 
     #[rstest]
@@ -257,7 +262,7 @@ mod tests {
             "type,client,tx,amount\ndeposit,1,1,100.0\nresolve,1,1,\n",
         );
         let snap = ClientSnapshot::from_client(records.get_client(1));
-        assert_eq!(snap.available, 100.0);
+        assert_eq!(snap.available, Decimal::new(1_000_000, 4));
     }
 
     #[rstest]
@@ -267,30 +272,33 @@ mod tests {
             "type,client,tx,amount\ndeposit,1,1,100.0\ndeposit,1,1,50.0\n",
         );
         let snap = ClientSnapshot::from_client(records.get_client(1));
-        assert_eq!(snap.available, 100.0);
+        assert_eq!(snap.available, Decimal::new(1_000_000, 4));
     }
 
     // --- PRECISION AND FORMATTING TESTS ---
     #[rstest]
-    #[case("type,client,tx,amount\ndeposit,1,1,1.5000\n", 1.5)]
-    #[case("type,client,tx,amount\ndeposit,1,1,1.5\n", 1.5)]
-    #[case("type,client,tx,amount\ndeposit,1,1,1\n", 1.0)]
-    #[case("type,client,tx,amount\ndeposit,1,1,100.1234\n", 100.1234)]
+    #[case("type,client,tx,amount\ndeposit,1,1,1.5000\n", Decimal::new(15_000, 4))]
+    #[case("type,client,tx,amount\ndeposit,1,1,1.5\n", Decimal::new(15_000, 4))]
+    #[case("type,client,tx,amount\ndeposit,1,1,1\n", Decimal::new(10_000, 4))]
+    #[case(
+        "type,client,tx,amount\ndeposit,1,1,100.1234\n",
+        Decimal::new(1_001_234, 4)
+    )]
     fn test_decimal_precision_variations(
         temp_csv: NamedTempFile,
         #[case] csv_content: &str,
-        #[case] expected: f64,
+        #[case] expected: Decimal,
     ) {
         let mut records = process_csv(temp_csv, csv_content);
         let snap = ClientSnapshot::from_client(records.get_client(1));
-        assert!((snap.available - expected).abs() < 0.0001);
+        assert_eq!(snap.available, expected);
     }
 
     #[rstest]
     fn test_whitespace_handling(temp_csv: NamedTempFile) {
         let mut records = process_csv(temp_csv, "type, client, tx, amount\ndeposit, 1, 1, 100.0\n");
         let snap = ClientSnapshot::from_client(records.get_client(1));
-        assert_eq!(snap.available, 100.0);
+        assert_eq!(snap.available, Decimal::new(1_000_000, 4));
     }
 
     // --- COMPLEX TRANSACTION SEQUENCES ---
@@ -310,13 +318,13 @@ chargeback,2,2,
         let mut records = process_csv(temp_csv, csv_content);
         let snap1 = ClientSnapshot::from_client(records.get_client(1));
         let snap2 = ClientSnapshot::from_client(records.get_client(2));
-        assert_eq!(snap1.available, 1.5);
-        assert_eq!(snap1.held, 0.0);
-        assert_eq!(snap1.total, 1.5);
+        assert_eq!(snap1.available, Decimal::new(15_000, 4));
+        assert_eq!(snap1.held, Decimal::ZERO);
+        assert_eq!(snap1.total, Decimal::new(15_000, 4));
         assert!(!snap1.locked);
-        assert_eq!(snap2.available, 0.0);
-        assert_eq!(snap2.held, 0.0);
-        assert_eq!(snap2.total, 0.0);
+        assert_eq!(snap2.available, Decimal::ZERO);
+        assert_eq!(snap2.held, Decimal::ZERO);
+        assert_eq!(snap2.total, Decimal::ZERO);
         assert!(snap2.locked);
     }
 
@@ -327,9 +335,9 @@ chargeback,2,2,
             "type,client,tx,amount\ndeposit,1,1,50.0\nwithdrawal,1,2,50.0\ndispute,1,1,\n",
         );
         let snap = ClientSnapshot::from_client(records.get_client(1));
-        assert_eq!(snap.available, -50.0);
-        assert_eq!(snap.held, 50.0);
-        assert_eq!(snap.total, 0.0);
+        assert_eq!(snap.available, Decimal::new(-500_000, 4));
+        assert_eq!(snap.held, Decimal::new(500_000, 4));
+        assert_eq!(snap.total, Decimal::ZERO);
     }
 
     #[rstest]
@@ -339,7 +347,7 @@ chargeback,2,2,
             "type,client,tx,amount\ndeposit,1,1,100.0\ndispute,1,1,\nwithdrawal,1,2,50.0\n",
         );
         let snap = ClientSnapshot::from_client(records.get_client(1));
-        assert_eq!(snap.available, 0.0);
-        assert_eq!(snap.held, 100.0);
+        assert_eq!(snap.available, Decimal::ZERO);
+        assert_eq!(snap.held, Decimal::new(1_000_000, 4));
     }
 }
