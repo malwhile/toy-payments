@@ -4,6 +4,8 @@
 
 use anyhow::Result;
 use csv::Writer;
+use rust_decimal::Decimal;
+use rust_decimal::prelude::*;
 use serde::{Deserialize, Deserializer, Serializer};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -12,29 +14,26 @@ use std::{
 
 use crate::{client::Client, transaction::Transaction};
 
-pub fn round_amount(value: f64) -> f64 {
-    (value * 10000.0).round() / 10000.0
-}
-
-pub fn serialize_amount<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+pub fn serialize_amount<S>(value: &Decimal, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
-    let rounded = round_amount(*value);
-    serializer.serialize_f64(rounded)
+    serializer.serialize_str(&value.to_string())
 }
 
-pub fn deserialize_amount<'de, D>(deserializer: D) -> Result<f64, D::Error>
+pub fn deserialize_amount_strict<'de, D>(deserializer: D) -> Result<Decimal, D::Error>
 where
     D: Deserializer<'de>,
 {
     let s = String::deserialize(deserializer)?;
     if s.is_empty() {
-        return Ok(0.0);
+        return Ok(Decimal::new(0, 4));
     }
 
-    let amount: f64 = s.parse::<f64>().map_err(serde::de::Error::custom)?;
-    Ok(round_amount(amount))
+    Ok(match Decimal::from_str(&s) {
+        Ok(val) => val,
+        Err(_) => Decimal::new(0, 4),
+    })
 }
 
 pub struct BankingRecords {
@@ -119,20 +118,20 @@ mod tests {
             type_: TransactionType::Deposit,
             client: 1,
             tx: 1,
-            amount: 100.0,
+            amount: Decimal::new(100_000, 4),
         }
     }
 
     // --- TRANSACTION STORAGE TESTS ---
     #[rstest]
-    #[case(1, 1, 100.0)]
-    #[case(2, 5, 250.5)]
-    #[case(65535, 4294967295, 9999.9999)]
+    #[case(1, 1, Decimal::new(100_000, 4))]
+    #[case(2, 5, Decimal::new(250500, 4))]
+    #[case(65535, 4294967295, Decimal::new(99999999, 4))]
     fn test_set_and_get_transaction(
         mut records: BankingRecords,
         #[case] client_id: u16,
         #[case] tx_id: u32,
-        #[case] amount: f64,
+        #[case] amount: Decimal,
     ) {
         let transaction = Transaction {
             type_: TransactionType::Deposit,
@@ -169,13 +168,13 @@ mod tests {
             type_: TransactionType::Withdrawal,
             client: 1,
             tx: tx_id,
-            amount: 50.0,
+            amount: Decimal::new(50_000, 4),
         };
         records.set_transaction(updated_transaction);
         let second = records.get_transaction(tx_id).unwrap().amount;
 
-        assert_eq!(first, 100.0);
-        assert_eq!(second, 50.0);
+        assert_eq!(first, Decimal::new(100_000, 4));
+        assert_eq!(second, Decimal::new(50_000, 4));
     }
 
     // --- DISPUTE STATE TESTS ---
@@ -220,13 +219,13 @@ mod tests {
             type_: TransactionType::Deposit,
             client: 1,
             tx: tx_id,
-            amount: 100.0,
+            amount: Decimal::new(100_000, 4),
         };
         let tx2 = Transaction {
             type_: TransactionType::Deposit,
             client: 1,
             tx: tx_id.wrapping_add(1),
-            amount: 50.0,
+            amount: Decimal::new(50_000, 4),
         };
 
         records.set_transaction(tx1);
@@ -291,9 +290,9 @@ mod tests {
         let client = records.get_client(client_id);
         let snap = ClientSnapshot::from_client(client);
 
-        assert_eq!(snap.available, 0.0);
-        assert_eq!(snap.held, 0.0);
-        assert_eq!(snap.total, 0.0);
+        assert_eq!(snap.available, Decimal::ZERO);
+        assert_eq!(snap.held, Decimal::ZERO);
+        assert_eq!(snap.total, Decimal::ZERO);
         assert!(!snap.locked);
     }
 
@@ -304,12 +303,12 @@ mod tests {
 
         {
             let client = records.get_client(1);
-            let _ = client.transact(&TransactionType::Deposit, 100.0);
+            let _ = client.transact(&TransactionType::Deposit, Decimal::new(1_000_000, 4));
         }
 
         let client = records.get_client(1);
         let snap = ClientSnapshot::from_client(client);
-        assert_eq!(snap.available, 100.0);
+        assert_eq!(snap.available, Decimal::new(1_000_000, 4));
     }
 
     #[rstest]
@@ -319,26 +318,26 @@ mod tests {
 
         {
             let client = records.get_client(1);
-            let _ = client.transact(&TransactionType::Deposit, 100.0);
+            let _ = client.transact(&TransactionType::Deposit, Decimal::new(1_000_000, 4));
         }
 
         {
             let client = records.get_client(2);
-            let _ = client.transact(&TransactionType::Deposit, 50.0);
+            let _ = client.transact(&TransactionType::Deposit, Decimal::new(500_000, 4));
         }
 
         {
             let client = records.get_client(3);
-            let _ = client.transact(&TransactionType::Deposit, 75.0);
+            let _ = client.transact(&TransactionType::Deposit, Decimal::new(750_000, 4));
         }
 
         let snap1 = ClientSnapshot::from_client(records.get_client(1));
         let snap2 = ClientSnapshot::from_client(records.get_client(2));
         let snap3 = ClientSnapshot::from_client(records.get_client(3));
 
-        assert_eq!(snap1.available, 100.0);
-        assert_eq!(snap2.available, 50.0);
-        assert_eq!(snap3.available, 75.0);
+        assert_eq!(snap1.available, Decimal::new(1_000_000, 4));
+        assert_eq!(snap2.available, Decimal::new(500_000, 4));
+        assert_eq!(snap3.available, Decimal::new(750_000, 4));
     }
 
     // --- CSV OUTPUT TESTS ---
@@ -360,7 +359,7 @@ mod tests {
         use crate::transaction::TransactionType;
 
         let client = records.get_client(1);
-        let _ = client.transact(&TransactionType::Deposit, 100.0);
+        let _ = client.transact(&TransactionType::Deposit, Decimal::new(1_000_000, 4));
 
         let csv = records.clients_to_csv().unwrap();
         assert!(csv.contains("1,100"));
@@ -372,13 +371,13 @@ mod tests {
 
         {
             let c1 = records.get_client(1);
-            let _ = c1.transact(&TransactionType::Deposit, 100.0);
+            let _ = c1.transact(&TransactionType::Deposit, Decimal::new(1_000_000, 4));
         }
 
         {
             let c2 = records.get_client(2);
-            let _ = c2.transact(&TransactionType::Deposit, 50.0);
-            let _ = c2.transact(&TransactionType::Withdrawal, 20.0);
+            let _ = c2.transact(&TransactionType::Deposit, Decimal::new(500_000, 4));
+            let _ = c2.transact(&TransactionType::Withdrawal, Decimal::new(200_000, 4));
         }
 
         let csv = records.clients_to_csv().unwrap();
@@ -393,7 +392,7 @@ mod tests {
             type_: TransactionType::Deposit,
             client: 1,
             tx: 1,
-            amount: 100.0,
+            amount: Decimal::new(100_000, 4),
         };
 
         records.set_transaction(tx);
@@ -415,7 +414,7 @@ mod tests {
             type_: TransactionType::Deposit,
             client: 1,
             tx: 1,
-            amount: 100.0,
+            amount: Decimal::new(100_000, 4),
         };
 
         records.set_transaction(tx);
